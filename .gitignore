@@ -1,0 +1,4 @@
+/in_cpp/*
+!/in_cpp/.gitkeep
+/retroarch-joypad-autoconfig
+controller_profiles.cpp
