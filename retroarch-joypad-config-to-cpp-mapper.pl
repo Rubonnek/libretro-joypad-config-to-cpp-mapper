@@ -23,40 +23,28 @@ use Data::Dumper;
 #binmode STDOUT, ':utf8';
 
 # Envrionment variables:
-my $input_filename;
 #my $output_filename;
-my $declare_cpp_variables;
 my $help;
 
 #"output-file|o=s"   => \$output_filename,
-GetOptions ("input-file|i=s"   => \$input_filename,
-	"declare-cpp-variables|d"   => \$declare_cpp_variables,
-	"help|h"  => \$help)
-	or die $!;
+GetOptions (
+	"help|h"  => \$help
+) or die $!;
 
-sub usage {
+sub usage
+{
 	print << "	EOF"
 	Description:
-	parser for converting the controller information from the libretro project to C++ std::map
+	parser for converting the controller information from the libretro project to a C++ std::map
 
 	Usage:
-	-i, --input-filename <filename>			Input file.
-
-	$0 --input-file foo.cpp
+	$0
 
 	EOF
-
 }
 
 if ( defined $help )
 {
-	usage();
-	exit;
-}
-
-if ( ! defined $input_filename )
-{
-	print STDERR "Error: Input file ( -i ) must be given.";
 	usage();
 	exit;
 }
@@ -68,10 +56,6 @@ if ( ! defined $input_filename )
 #	exit;
 #}
 
-
-
-# Loop over the contents of the file:
-open my $input_filehandle, "<", $input_filename or die $!;
 
 # Note: the RetroArch mapping consists of maping all the controllers to a
 # theoretical SNES controller with thumbsticks and extra shoulder buttons This
@@ -185,120 +169,191 @@ my $axis_input_mapping_in_cpp;
 
 # Generate final filename:
 use File::Basename;
-my $output_filename = $input_filename;
-$output_filename = "./in_cpp/" . basename($output_filename) . ".cpp";
-open my $output_filehandle, ">", $output_filename or die $!;
+my $output_filename = "controller_profiles.cpp";
+#$output_filename = "./in_cpp/" . basename($output_filename) . ".cpp";
 
 # Loop over the input filename lines:
-my %hash_to_count_how_many_times_a_key_has_been_processed;
-while( <$input_filehandle> )
+my %hash_to_count_how_many_times_a_button_key_has_been_processed;
+my %hash_to_count_how_many_times_an_axis_key_has_been_processed;
+my %hash_to_count_how_many_times_a_controller_been_processed;
+my $controller_being_processed;
+my $processed_file_count;
+my $final_cpp_to_write;
+
+# TODO: add new parameter for specifying the directory later or selecting a single input file if needed
+my @files = <./retroarch-joypad-autoconfig/udev/*>;
+
+# Loop over all the files in that directory:
+foreach my $file (@files)
 {
-
-	# Check if we found the device name
-	if ( $_ =~ /^\s*input_device\s*=\s*"(.*)"/ )
+	#Debug:
+	#print $file . "\n";
+	open my $input_filehandle, "<", $file or die $!;
+	while( <$input_filehandle> )
 	{
-		#Debug:
-		#print "Found device name: " . $1;
 
-		# Text to construct:
-		#	std::string deviceName = (what we get from input_device);
-		#	std::vector buttonInputMap;
-
-		if ( defined $declare_cpp_variables )
+		# Check if we found the device name
+		if ( $_ =~ /^\s*input_device\s*=\s*"(.*)"/ )
 		{
-
-			$deviceName .= "// Create the necessary variables:\n";
-			$deviceName .= "std::string deviceName = \"" . $1 . "\";\n";
-			$deviceName .= "std::unordered_map<int,int> buttonInputMap;\n";
-			$deviceName .= "std::unordered_map<int,int> axisInputMap;\n";
-			$deviceName .= "// Make sure the following is a member variable, or create it now:\n";
-			$deviceName .= "// std::map<std::string, std::pair< std::unordered_map<int, int>, std::unordered_map<int,int> > > s_controllerProfiles;";
-		}
-		else
-		{
-			$deviceName .= "// Prepare variables:\n";
-			$deviceName .= "deviceName = \"" . $1 . "\";\n";
-			$deviceName .= "buttonInputMap.clear();\n";
-			$deviceName .= "axisInputMap.clear();\n";
-		}
-		$deviceName .= "\n\n// Map the controller inputs to Controller::Key codes\n";
-	}
-
-	# Loop for mapping the buttons ( state is an int or bool ):
-	foreach my $key_to_import ( keys %button_mapping_to_import )
-	{
-		#print $key_to_import . "\n";
-		if ( $_ =~ /^\s*\Q$key_to_import\E\s*=\s*"(\+*\-*\d*)"/ )
-		{
-			# Debug Regular expression:
-			# print "Line is: " . $_;
-			# print "value found is: " . $1 . "\n";
-
-			# Remove any noise from the value.
-			# Note: We are keeping the +, - noise in
-			# case we have to update this code later on when GLFW 3.3 is stable
-			# and released
-
-			my $key_code = $1;
-			$key_code =~ s/-//g;
-			$key_code =~ s/\+//g;
+			#Debug:
+			#print "Found device name: " . $1;
 
 			# Text to construct:
-			#	buttonInputMap[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
-			#	... and so on
+			#	std::string deviceName = (what we get from input_device);
+			#	std::vector buttonInputMap;
 
-			if ( $key_code ne "" )
+			++$processed_file_count;
+			$controller_being_processed = $1;
+
+			++$hash_to_count_how_many_times_a_controller_been_processed{$controller_being_processed};
+			if ( $hash_to_count_how_many_times_a_controller_been_processed{$controller_being_processed} == 1 )
 			{
-				$button_input_mapping_in_cpp .= "buttonInputMap[" . $key_code . "] = " . $button_mapping_to_import{$key_to_import} . ";\n";
+				if ( $processed_file_count == 1 )
+				{
+					$deviceName .= "// Create the necessary variables:\n";
+					$deviceName .= "std::string deviceName = \"" . $controller_being_processed . "\";\n";
+					$deviceName .= "std::unordered_map<int,int> buttonInputMap;\n";
+					$deviceName .= "std::unordered_map<int,int> axisInputMap;\n";
+					$deviceName .= "// Make sure the following is a member variable, or create it now:\n";
+					$deviceName .= "// std::map<std::string, std::pair< std::unordered_map<int, int>, std::unordered_map<int,int> > > s_controllerProfiles;\n";
+				}
+				else
+				{
+					$deviceName .= "// Prepare variables:\n";
+					$deviceName .= "deviceName = \"" . $controller_being_processed . "\";\n";
+					$deviceName .= "buttonInputMap.clear();\n";
+					$deviceName .= "axisInputMap.clear();\n";
+				}
+				$deviceName .= "\n\n// Map the controller inputs to Controller::Key codes\n";
 			}
-		}
-	}
+			else
+			{
+				$deviceName .= "// Prepare variables:\n";
+				$deviceName .= "//deviceName = \"" . $controller_being_processed . "\";\n";
+				$deviceName .= "//buttonInputMap.clear();\n";
+				$deviceName .= "//axisInputMap.clear();\n";
+				$deviceName .= "\n\n// Map the controller inputs to Controller::Key codes\n";
+			}
 
-	# Loop for mapping any of the axis on the controller:
-	foreach my $key_to_import ( keys %axis_mapping_to_import )
-	{
-		#print $key_to_import . "\n";
-		if ( $_ =~ /^\s*\Q$key_to_import\E\s*=\s*"(.*)"/ )
+			# Empty all the other hashes
+			%hash_to_count_how_many_times_a_button_key_has_been_processed = ();
+			%hash_to_count_how_many_times_an_axis_key_has_been_processed = ();
+		}
+
+		# Loop for mapping the buttons ( state is an int or bool ):
+		foreach my $key_to_import ( keys %button_mapping_to_import )
 		{
-			# Debug Regular expression:
-			# print "Line is: " . $_;
-			# print "value found is: " . $1 . "\n";
-
-			# Remove any noise from the value.
-			# Note: We are keeping the +, - noise in
-			# case we have to update this code later on when GLFW 3.3 is stable
-			# and released
-			my $key_code = $1;
-			$key_code =~ s/-//g;
-			$key_code =~ s/\+//g;
-
-			# For some joysticks, like the "Logitech Logitech Dual Action", the mapping has some word like h0down and such.
-			# Turn this to numbers, and for the case of this Logitech controller, just map them to the right number:
-			$key_code =~ s/h0down/5/g;
-			$key_code =~ s/h0up/5/g;
-			$key_code =~ s/h0left/4/g;
-			$key_code =~ s/h0right/4/g;
-			# For the controllers thatr contain the h0up, h0down, h0left, and h0right
-
-			# Text to construct:
-			#	axisInputMap[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
-			#	... and so on
-
-			++$hash_to_count_how_many_times_a_key_has_been_processed{$key_code};
-
-			if ( $key_code =~ /\d+/ && $hash_to_count_how_many_times_a_key_has_been_processed{$key_code} == 1)
+			#print $key_to_import . "\n";
+			if ( $_ =~ /^\s*\Q$key_to_import\E\s*=\s*"(\+*\-*\d*)"/ )
 			{
-				$axis_input_mapping_in_cpp .= "axisInputMap[" . $key_code . "] = " . $axis_mapping_to_import{$key_to_import} . ";\n";
+				# Debug Regular expression:
+				# print "Line is: " . $_;
+				# print "value found is: " . $1 . "\n";
+
+				# Remove any noise from the value.
+				# Note: We are keeping the +, - noise in
+				# case we have to update this code later on when GLFW 3.3 is stable
+				# and released
+
+				my $key_code = $1;
+				$key_code =~ s/-//g;
+				$key_code =~ s/\+//g;
+
+				# Text to construct:
+				#	buttonInputMap[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
+				#	... and so on
+
+				++$hash_to_count_how_many_times_a_button_key_has_been_processed{$key_code};
+				if ( $key_code =~ /\d+/ && $hash_to_count_how_many_times_a_controller_been_processed{$controller_being_processed} != 1 ) # if the same controller was processed more than once, just comment out the code
+				{
+					$button_input_mapping_in_cpp .= "//buttonInputMap[" . $key_code . "] = " . $button_mapping_to_import{$key_to_import} . ";\n";
+				}
+				elsif ( $key_code =~ /\d+/ && $hash_to_count_how_many_times_a_button_key_has_been_processed{$key_code} == 1) # if the keycode appeared more than once, also comment out the code
+				{
+					$button_input_mapping_in_cpp .= "buttonInputMap[" . $key_code . "] = " . $button_mapping_to_import{$key_to_import} . ";\n";
+				}
+				else # the key code has been processed more than once, print the linke but comment it to avoid cppcheck messages
+				{
+					$button_input_mapping_in_cpp .= "//buttonInputMap[" . $key_code . "] = " . $button_mapping_to_import{$key_to_import} . ";\n";
+				}
+				last;
 			}
-			else # the key code has been processed more than once, print the linke but comment it to avoid cppcheck messages
+		}
+
+		# Loop for mapping any of the axis on the controller:
+		foreach my $key_to_import ( keys %axis_mapping_to_import )
+		{
+			#print $key_to_import . "\n";
+			if ( $_ =~ /^\s*\Q$key_to_import\E\s*=\s*"(.*)"/ )
 			{
-				$axis_input_mapping_in_cpp .= "//axisInputMap[" . $key_code . "] = " . $axis_mapping_to_import{$key_to_import} . ";\n";
+				# Debug Regular expression:
+				# print "Line is: " . $_;
+				# print "value found is: " . $1 . "\n";
+
+				# Remove any noise from the value.
+				# Note: We are keeping the +, - noise in
+				# case we have to update this code later on when GLFW 3.3 is stable
+				# and released
+				my $key_code = $1;
+				$key_code =~ s/-//g;
+				$key_code =~ s/\+//g;
+
+				# For some joysticks, like the "Logitech Logitech Dual Action", the mapping has some word like h0down and such.
+				# Turn this to numbers, and for the case of this Logitech controller, just map them to the right number:
+				$key_code =~ s/h0down/5/g;
+				$key_code =~ s/h0up/5/g;
+				$key_code =~ s/h0left/4/g;
+				$key_code =~ s/h0right/4/g;
+				# For the controllers thatr contain the h0up, h0down, h0left, and h0right
+
+				# Text to construct:
+				#	axisInputMap[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
+				#	... and so on
+
+				++$hash_to_count_how_many_times_an_axis_key_has_been_processed{$key_code};
+				if ( $key_code =~ /\d+/ && $hash_to_count_how_many_times_a_controller_been_processed{$controller_being_processed} != 1 ) # if the same controller was processed more than once, just comment out the code
+				{
+					$axis_input_mapping_in_cpp .= "//axisInputMap[" . $key_code . "] = " . $axis_mapping_to_import{$key_to_import} . ";\n";
+				}
+				elsif ( $key_code =~ /\d+/ && $hash_to_count_how_many_times_an_axis_key_has_been_processed{$key_code} == 1)
+				{
+					$axis_input_mapping_in_cpp .= "axisInputMap[" . $key_code . "] = " . $axis_mapping_to_import{$key_to_import} . ";\n";
+				}
+				else # the key code has been processed more than once, print the linke but comment it to avoid cppcheck messages
+				{
+					$axis_input_mapping_in_cpp .= "//axisInputMap[" . $key_code . "] = " . $axis_mapping_to_import{$key_to_import} . ";\n";
+				}
+				last;
 			}
 		}
 	}
+	close $input_filehandle;
+
+	# We are done reading the libretro configuration file. Build the cpp we want to build and reset variables
+	$final_cpp_to_write .= $deviceName;
+	$deviceName = "";
+	if ( defined $button_input_mapping_in_cpp )
+	{
+		$final_cpp_to_write .= $button_input_mapping_in_cpp;
+		undef $button_input_mapping_in_cpp;
+	}
+	if ( defined $axis_input_mapping_in_cpp )
+	{
+		$final_cpp_to_write .= $axis_input_mapping_in_cpp;
+		undef $axis_input_mapping_in_cpp;
+	}
+
+	$final_cpp_to_write .= "\n\n// Add the controller profile to the map\n";
+	if ($hash_to_count_how_many_times_a_controller_been_processed{$controller_being_processed} == 1 )
+	{
+		$final_cpp_to_write .= "s_controllerProfiles.insert(std::make_pair(deviceName, std::make_pair(buttonInputMap, axisInputMap)));\n";
+	}
+	else
+	{
+		$final_cpp_to_write .= "//s_controllerProfiles.insert(std::make_pair(deviceName, std::make_pair(buttonInputMap, axisInputMap)));\n";
+	}
+	$final_cpp_to_write .= "\n\n";
 }
-
-# Write cpp code to disk:
 
 # Debug:
 # print $deviceName;
@@ -307,21 +362,12 @@ while( <$input_filehandle> )
 # print "\n// Add the controller profile to the mapping:\n";
 # print "s_controllerProfiles.insert(std::make_pair(deviceName, std::make_pair(buttonInputMap, axisInputMap)));\n";
 
+
+# Get the filehandle
+open my $output_filehandle, ">", $output_filename or die $!;
+
 # Write to disk
-print $output_filehandle $deviceName;
-if ( defined $button_input_mapping_in_cpp )
-{
-	print $output_filehandle $button_input_mapping_in_cpp;
-}
-if ( defined $axis_input_mapping_in_cpp )
-{
-	print $output_filehandle $axis_input_mapping_in_cpp;
-}
-print $output_filehandle "\n\n// Add the controller profile to the map\n";
-print $output_filehandle "s_controllerProfiles.insert(std::make_pair(deviceName, std::make_pair(buttonInputMap, axisInputMap)));\n";
-print $output_filehandle "\n\n";
-#print "\n\n\n" . $output_filename . "\n";
+print $output_filehandle $final_cpp_to_write;
 
 # Close up the filehandle:
 close($output_filehandle);
-
