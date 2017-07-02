@@ -111,24 +111,24 @@ open my $input_filehandle, "<", $input_filename or die $!;
 
 
 # For buttons, we are going to use an std::map. Here is how we are going to control each profile:
-#	std::map<std::string controller_name, std::pair(std::map<int, int>, std::map<int,int>) > _controller_profiles;
+#	std::map<std::string deviceName, std::pair(std::unordered_map<int, int>, std::unordered_map<int,int>) > s_controllerProfiles;
 
 # Here's how we are going to store each controller profile:
 # We get the input_device from the retroarch configuration files and store it as:
-#	std::string controller_name = (what we get from input_device);
-#	std::vector button_input_mapping;
-#	button_input_mapping[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
-#	button_input_mapping[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
-#	button_input_mapping[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
+#	std::string deviceName = (what we get from input_device);
+#	std::vector buttonInputMap;
+#	buttonInputMap[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
+#	buttonInputMap[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
+#	buttonInputMap[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
 #	... and so on
-#	std::vector axis_input_mapping;
-#	axis_input_mapping[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
-#	axis_input_mapping[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
-#	axis_input_mapping[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
+#	std::vector axisInputMap;
+#	axisInputMap[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
+#	axisInputMap[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
+#	axisInputMap[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
 #	... and so on
 
 # And when we are done parsing the configuration file, we push it back to the std::map
-#	_controller_profiles.insert(std::make_pair(controller_name, input_mapping));
+#	s_controllerProfiles.insert(std::make_pair(deviceName, input_mapping));
 
 # Here's how we are going to match each controller profile when a controller gets connected:
 
@@ -179,7 +179,7 @@ my %axis_mapping_to_import = (
 	input_down_axis => 'Controller::Key::BUTTON_DPAD_DOWN',
 );
 
-my $controller_name;
+my $deviceName;
 my $button_input_mapping_in_cpp;
 my $axis_input_mapping_in_cpp;
 
@@ -190,6 +190,7 @@ $output_filename = "./in_cpp/" . basename($output_filename) . ".cpp";
 open my $output_filehandle, ">", $output_filename or die $!;
 
 # Loop over the input filename lines:
+my %hash_to_count_how_many_times_a_key_has_been_processed;
 while( <$input_filehandle> )
 {
 
@@ -200,26 +201,27 @@ while( <$input_filehandle> )
 		#print "Found device name: " . $1;
 
 		# Text to construct:
-		#	std::string controller_name = (what we get from input_device);
-		#	std::vector button_input_mapping;
+		#	std::string deviceName = (what we get from input_device);
+		#	std::vector buttonInputMap;
 
 		if ( defined $declare_cpp_variables )
 		{
-			$controller_name .= "// Create the necessary variables:\n";
-			$controller_name .= "std::string controller_name = \"" . $1 . "\";\n";
-			$controller_name .= "std::map<int,int> button_input_mapping;\n";
-			$controller_name .= "std::map<int,int> axis_input_mapping;\n";
-			$controller_name .= "// Make sure the following is a member variable, or create it now:\n";
-			$controller_name .= "// std::map<std::string, std::pair<std::map<int, int>, std::map<int,int> > > _controller_profiles;";
+
+			$deviceName .= "// Create the necessary variables:\n";
+			$deviceName .= "std::string deviceName = \"" . $1 . "\";\n";
+			$deviceName .= "std::unordered_map<int,int> buttonInputMap;\n";
+			$deviceName .= "std::unordered_map<int,int> axisInputMap;\n";
+			$deviceName .= "// Make sure the following is a member variable, or create it now:\n";
+			$deviceName .= "// std::map<std::string, std::pair< std::unordered_map<int, int>, std::unordered_map<int,int> > > s_controllerProfiles;";
 		}
 		else
 		{
-			$controller_name .= "// Prepare variables:\n";
-			$controller_name .= "controller_name = \"" . $1 . "\";\n";
-			$controller_name .= "button_input_mapping.clear();\n";
-			$controller_name .= "axis_input_mapping.clear();\n";
+			$deviceName .= "// Prepare variables:\n";
+			$deviceName .= "deviceName = \"" . $1 . "\";\n";
+			$deviceName .= "buttonInputMap.clear();\n";
+			$deviceName .= "axisInputMap.clear();\n";
 		}
-		$controller_name .= "\n\n// Map the controller inputs to Controller::Key codes\n";
+		$deviceName .= "\n\n// Map the controller inputs to Controller::Key codes\n";
 	}
 
 	# Loop for mapping the buttons ( state is an int or bool ):
@@ -242,12 +244,12 @@ while( <$input_filehandle> )
 			$key_code =~ s/\+//g;
 
 			# Text to construct:
-			#	button_input_mapping[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
+			#	buttonInputMap[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
 			#	... and so on
 
 			if ( $key_code ne "" )
 			{
-				$button_input_mapping_in_cpp .= "button_input_mapping[" . $key_code . "] = " . $button_mapping_to_import{$key_to_import} . ";\n";
+				$button_input_mapping_in_cpp .= "buttonInputMap[" . $key_code . "] = " . $button_mapping_to_import{$key_to_import} . ";\n";
 			}
 		}
 	}
@@ -279,12 +281,18 @@ while( <$input_filehandle> )
 			# For the controllers thatr contain the h0up, h0down, h0left, and h0right
 
 			# Text to construct:
-			#	axis_input_mapping[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
+			#	axisInputMap[(what we get from parsing the retroarch config)] = Controller::Key::Correspondingkey;
 			#	... and so on
 
-			if ( $key_code =~ /\d+/ )
+			++$hash_to_count_how_many_times_a_key_has_been_processed{$key_code};
+
+			if ( $key_code =~ /\d+/ && $hash_to_count_how_many_times_a_key_has_been_processed{$key_code} == 1)
 			{
-				$axis_input_mapping_in_cpp .= "axis_input_mapping[" . $key_code . "] = " . $axis_mapping_to_import{$key_to_import} . ";\n";
+				$axis_input_mapping_in_cpp .= "axisInputMap[" . $key_code . "] = " . $axis_mapping_to_import{$key_to_import} . ";\n";
+			}
+			else # the key code has been processed more than once, print the linke but comment it to avoid cppcheck messages
+			{
+				$axis_input_mapping_in_cpp .= "//axisInputMap[" . $key_code . "] = " . $axis_mapping_to_import{$key_to_import} . ";\n";
 			}
 		}
 	}
@@ -293,14 +301,14 @@ while( <$input_filehandle> )
 # Write cpp code to disk:
 
 # Debug:
-# print $controller_name;
+# print $deviceName;
 # print $button_input_mapping_in_cpp;
 # print $axis_input_mapping_in_cpp;
 # print "\n// Add the controller profile to the mapping:\n";
-# print "_controller_profiles.insert(std::make_pair(controller_name, std::make_pair(button_input_mapping, axis_input_mapping)));\n";
+# print "s_controllerProfiles.insert(std::make_pair(deviceName, std::make_pair(buttonInputMap, axisInputMap)));\n";
 
 # Write to disk
-print $output_filehandle $controller_name;
+print $output_filehandle $deviceName;
 if ( defined $button_input_mapping_in_cpp )
 {
 	print $output_filehandle $button_input_mapping_in_cpp;
@@ -309,8 +317,8 @@ if ( defined $axis_input_mapping_in_cpp )
 {
 	print $output_filehandle $axis_input_mapping_in_cpp;
 }
-print $output_filehandle "\n\n// Add the controller profile to the mapping:\n";
-print $output_filehandle "_controller_profiles.insert(std::make_pair(controller_name, std::make_pair(button_input_mapping, axis_input_mapping)));\n";
+print $output_filehandle "\n\n// Add the controller profile to the map\n";
+print $output_filehandle "s_controllerProfiles.insert(std::make_pair(deviceName, std::make_pair(buttonInputMap, axisInputMap)));\n";
 print $output_filehandle "\n\n";
 #print "\n\n\n" . $output_filename . "\n";
 
